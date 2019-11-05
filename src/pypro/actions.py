@@ -22,12 +22,6 @@ def build_py():
     print("build py")
 
 
-def build_clib():
-    """Build accompanying libraries (not extension modules) in the project.
-    """
-    print("build clib")
-
-
 def build_ext():
     """Build extensions in the project.
     """
