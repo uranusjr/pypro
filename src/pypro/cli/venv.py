@@ -1,9 +1,9 @@
 import os
 import sys
+import typing
 import warnings
 
-from ..actions import venvs
-from ..projects import Project
+from pypro.projects import Project, runtimes
 
 from ._errors import VENV_NOT_FOUND
 
@@ -22,18 +22,36 @@ def configure(parser):
     action_group.add_argument("--remove", help="remove the venv")
 
 
+def _find_runtime_match(
+    project: Project, alias: str
+) -> typing.Optional[runtimes.Runtime]:
+    try:
+        return project.find_runtime(alias)
+    except runtimes.NoRuntimes as e:
+        message = "Error: no matching venv for {!r}, tried: {}".format(
+            alias, ", ".join(r.name for r in e.tried)
+        )
+        print(message, file=sys.stderr)
+    except runtimes.MultipleRuntimes as e:
+        message = "Error: name {!r} is ambiguous; choose from: {}".format(
+            alias, ", ".join(p.name for p in e.matches)
+        )
+        print(message, file=sys.stderr)
+    return None
+
+
 def run(options):
     project = Project.discover()
 
     if options.add:
         python = options.add
         try:
-            info = venvs.create(project, python, prompt=project.name)
-        except venvs.InterpreterNotFound:
+            runtime = project.create_runtime(python, prompt=project.name)
+        except runtimes.InterpreterNotFound:
             message = "Error: {!r} is not a valid Python interpreter"
             print(message, file=sys.stderr)
             return VENV_NOT_FOUND
-        except venvs.PyUnavailable:
+        except runtimes.PyUnavailable:
             if os.name == "nt":
                 url = "https://docs.python.org/3/using/windows.html"
             else:
@@ -44,68 +62,44 @@ def run(options):
             ).format(url=url)
             print(message, file=sys.stderr)
             return VENV_NOT_FOUND
-        print("Switching to newly created {!r}".format(info.name))
-        venvs.activate(project, info.name)
+        print("Created runtime {!r}".format(runtime.name))
         return
 
     if options.remove:
         with warnings.catch_warnings(record=True) as recorder:
-            warnings.simplefilter("always", venvs.FailedToRemoveWarning)
-            venvs.remove(project, options.remove)
+            warnings.simplefilter("always", runtimes.FailedToRemove)
+
+            runtime = _find_runtime_match(project, options.venv)
+            if not runtime:
+                return VENV_NOT_FOUND
+
+            project.remove_runtime(runtime)
             for w in recorder:
                 env_dir, e = w.args
                 env_dir = env_dir.relative_to(project.root)
-                message = "Warning: Failed to remove {}: {}".format(env_dir, e)
+                message = "Warning: Failed to remove {}\n{}".format(env_dir, e)
                 print(message, file=sys.stderr)
         return
 
     if options.venv:
+        runtime = _find_runtime_match(project, options.venv)
+        if not runtime:
+            return VENV_NOT_FOUND
         try:
-            env_name = venvs.choose_venv(project, options.venv)
-        except venvs.NoVenvMatches as e:
-            alias, tried = e.args
-            tried = ", ".join(p.name for p in tried)
-            message = "Error: no matching venv for {!r}, tried: {}".format(
-                alias, tried
-            )
-            print(message, file=sys.stderr)
-            return VENV_NOT_FOUND
-        except venvs.MultipleVenvMatches as e:
-            alias, matches = e.args
-            matches = ", ".join(p.name for p in matches)
-            message = "Error: name {!r} is ambiguous; choose from: {}".format(
-                alias, matches
-            )
-            print(message, file=sys.stderr)
-            return VENV_NOT_FOUND
-        print("Switching to {!r}".format(env_name))
-        venvs.activate(project, env_name)
+            project.activate_runtime(runtime)
+        except Exception as e:
+            print("Error: Failed to activate {!r}\n{}".format(runtime.name, e))
+        else:
+            print("Switched to {!r}".format(runtime.name))
         return
 
     # No options provided: List available venvs.
+    print("  Quintuplet")
+    print("=" * 45)
 
-    active_name = venvs.get_active(project)
-    venv_infos = list(venvs.iter_infos(project))
-    if venv_infos:
-        let_len = max(len(info.name) for info in venv_infos)
-    else:
-        let_len = 10
-
-    form = "{0: <2}{1: {let_agn}{let_len}} {2: ^5} {3: ^5}"
-
-    title = form.format(
-        "", "Quintuplet", "Run", "Build", let_len=let_len, let_agn="^"
-    )
-    print(title)
-    print("=" * (len(title) + 1))
-
-    for info in venv_infos:
-        line = form.format(
-            "*" if info.name == active_name else "",
-            info.name,
-            "v" if info.run else "",
-            "v" if info.build else "",
-            let_len=let_len,
-            let_agn="<",
+    active_runtime = project.get_active_runtime()
+    for runtime in project.iter_runtimes():
+        line = "{} {}".format(
+            "*" if runtime == active_runtime else " ", runtime.name
         )
         print(line)
