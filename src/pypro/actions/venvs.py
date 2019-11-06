@@ -1,3 +1,4 @@
+import collections
 import contextlib
 import os
 import pathlib
@@ -126,6 +127,9 @@ class InterpreterNotFound(Exception):
     pass
 
 
+_VenvInfo = collections.namedtuple("_VenvInfo", "name run build")
+
+
 def create(project, python, *, prompt, system=False):
     """(Re-)create clean slate venvs based on given base interpreter.
 
@@ -136,7 +140,8 @@ def create(project, python, *, prompt, system=False):
     python = _resolve_python(python)
     if not python:
         raise InterpreterNotFound(python)
-    env_dirs = _get_env_dirs_for_name(_get_venv_name(python))
+    env_name = _get_venv_name(python)
+    env_dirs = _get_env_dirs_for_name(project, env_name)
     for env_dir in env_dirs:
         with open(os.devnull, "w") as f, _redirect_stdout(f):
             _virtenv.create(
@@ -146,13 +151,13 @@ def create(project, python, *, prompt, system=False):
                 prompt=prompt,
                 bare=False,
             )
-    return env_dirs
+    return _VenvInfo(env_name, *env_dirs)
 
 
 class _VenvMatcher:
     def __init__(self, parts, h=None):
         self._parts = [p.lower() for p in parts]
-        self._hash = h.lower()
+        self._hash = h.lower() if h else h
 
     @classmethod
     def _from_5(cls, v):
@@ -164,18 +169,18 @@ class _VenvMatcher:
 
     @classmethod
     def _from_3(cls, v):
-        return cls(v[:2] + [platform.uname().system] + v[2])
+        return cls(v[:2] + [platform.uname().system] + v[2:])
 
     @classmethod
     def _from_2(cls, v):
         uname = platform.uname()
-        return cls(v + [uname.machine, uname.system])
+        return cls(v + [uname.system, uname.machine])
 
     @classmethod
     def _from_1(cls, v):
         uname = platform.uname()
         impl = platform.python_implementation()
-        return cls([impl] + v + [uname.machine, uname.system])
+        return cls([impl] + v + [uname.system, uname.machine])
 
     @classmethod
     def from_alias(cls, alias):
@@ -192,7 +197,7 @@ class _VenvMatcher:
             }[len(parts)]
         except KeyError:
             raise ValueError(alias)
-        return ctor(alias)
+        return ctor(parts)
 
     def match(self, env_dir):
         parts = env_dir.name.split("-")
@@ -213,6 +218,8 @@ class MultipleVenvMatches(Exception):
 
 
 def _iter_venvs(container):
+    if not container.is_dir():
+        return
     for entry in container.iterdir():
         if not entry.is_dir():
             continue
@@ -242,7 +249,7 @@ def choose_venv(project, alias):
         raise NoVenvMatches(alias, list(_iter_venvs(container)))
     if len(matches) > 1:
         raise MultipleVenvMatches(alias, matches)
-    return matches[0]
+    return matches[0].name
 
 
 def activate(project, env_name):
@@ -257,18 +264,70 @@ def activate(project, env_name):
     marker.write_text(".venvs/{}".format(env_name))
 
 
+def get_active(project):
+    """Get the name of the activate venv.
+
+    This returns the name of the active venv (not the path), or None if there
+    is not a recognizable active venv.
+    """
+    path = project.root.joinpath(".venv")
+
+    # Normal case: .venv is a file. It should contain a relative path pointing
+    # to a venv in `{root}/.venvs`.
+    if path.is_file():
+        content = path.read_text().strip()
+        prefix, name = content.split("/", 1)
+        if prefix != ".venv":
+            return None
+        # TODO: Check the name is a valid quintuplet.
+        if not project.joinpath(".venvs", name).is_dir():
+            return None
+        return name
+
+    # Compatibility case: .venv is a link to a directory in `{root}/.venvs`.
+    # Use that if it's managed.
+    if path.is_symlink():
+        path = path.resolve()
+        if not path.is_dir():
+            return None
+        if project.root.joinpath(".venvs") not in path.parents:
+            return None
+        name = path.name
+        # TODO: Check the name is a valid quintuplet.
+        return name
+
+    return None
+
+
+def deactivate(project):
+    active = get_active(project)
+    if not active:
+        return None
+    marker = project.root.joinpath(".venv")
+    marker.unlink()
+    return active
+
+
 class FailedToRemoveWarning(UserWarning):
     pass
 
 
 def remove(project, env_name):
     # Deactivate env if it is going to be removed.
-    marker = project.root.joinpath(".venv")
-    if marker.read_text().strip() == ".venvs/{}".format(env_name):
-        marker.unlink()
+    if get_active(project) == env_name:
+        deactivate(project)
 
-    for env_dir in _get_env_dirs_for_name(env_name):
+    for env_dir in _get_env_dirs_for_name(project, env_name):
         try:
             shutil.rmtree(str(env_dir))
         except Exception as e:
             warnings.warn(FailedToRemoveWarning(env_dir, str(e)))
+
+
+def iter_infos(project):
+    root = project.root
+
+    runs = {p.name: p for p in _iter_venvs(root.joinpath(".venvs"))}
+    builds = {p.name: p for p in _iter_venvs(root.joinpath("build", ".venvs"))}
+    for k in sorted(set(runs) | set(builds)):
+        yield _VenvInfo(k, runs.get(k), builds.get(k))

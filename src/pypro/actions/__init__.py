@@ -2,14 +2,10 @@ __all__ = [
     "build_py",
     "build_ext",
     "clean",
-    "create_venvs",
     "install_project",
     "run_script",
     "sync_dependencies",
 ]
-
-
-from .venvs import create_venvs
 
 
 def clean():

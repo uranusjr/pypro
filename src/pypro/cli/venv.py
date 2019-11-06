@@ -14,7 +14,7 @@ options = {"usage": "Manage venvs for this project"}
 
 
 def configure(parser):
-    action_group = parser.add_mutually_exclusive_group(required=True)
+    action_group = parser.add_mutually_exclusive_group()
     action_group.add_argument("venv", nargs="?", help="activate venv")
     action_group.add_argument(
         "--add", help="create new venv with given base interpreter"
@@ -28,7 +28,7 @@ def run(options):
     if options.add:
         python = options.add
         try:
-            venv, _ = venvs.create(project, python, prompt=project.name)
+            info = venvs.create(project, python, prompt=project.name)
         except venvs.InterpreterNotFound:
             message = "Error: {!r} is not a valid Python interpreter"
             print(message, file=sys.stderr)
@@ -44,7 +44,8 @@ def run(options):
             ).format(url=url)
             print(message, file=sys.stderr)
             return VENV_NOT_FOUND
-        venvs.activate(venv.name)
+        print("Switching to newly created {!r}".format(info.name))
+        venvs.activate(project, info.name)
         return
 
     if options.remove:
@@ -58,23 +59,53 @@ def run(options):
                 print(message, file=sys.stderr)
         return
 
-    try:
-        env_dir = venvs.choose_venv(project, options.venv)
-    except venvs.NoVenvMatches as e:
-        alias, tried = e.args
-        tried = ", ".join(p.name for p in tried)
-        message = "Error: no matching venv for {!r}, tried: {}".format(
-            alias, tried
-        )
-        print(message, file=sys.stderr)
-        return VENV_NOT_FOUND
-    except venvs.MultipleVenvMatches as e:
-        alias, matches = e.args
-        matches = ", ".join(p.name for p in matches)
-        message = "Error: name {!r} is ambiguous; choose from: {}".format(
-            alias, matches
-        )
-        print(message, file=sys.stderr)
-        return VENV_NOT_FOUND
+    if options.venv:
+        try:
+            env_name = venvs.choose_venv(project, options.venv)
+        except venvs.NoVenvMatches as e:
+            alias, tried = e.args
+            tried = ", ".join(p.name for p in tried)
+            message = "Error: no matching venv for {!r}, tried: {}".format(
+                alias, tried
+            )
+            print(message, file=sys.stderr)
+            return VENV_NOT_FOUND
+        except venvs.MultipleVenvMatches as e:
+            alias, matches = e.args
+            matches = ", ".join(p.name for p in matches)
+            message = "Error: name {!r} is ambiguous; choose from: {}".format(
+                alias, matches
+            )
+            print(message, file=sys.stderr)
+            return VENV_NOT_FOUND
+        print("Switching to {!r}".format(env_name))
+        venvs.activate(project, env_name)
+        return
 
-    venvs.activate(env_dir.name)
+    # No options provided: List available venvs.
+
+    active_name = venvs.get_active(project)
+    venv_infos = list(venvs.iter_infos(project))
+    if venv_infos:
+        let_len = max(len(info.name) for info in venv_infos)
+    else:
+        let_len = 10
+
+    form = "{0: <2}{1: {let_agn}{let_len}} {2: ^5} {3: ^5}"
+
+    title = form.format(
+        "", "Quintuplet", "Run", "Build", let_len=let_len, let_agn="^"
+    )
+    print(title)
+    print("=" * (len(title) + 1))
+
+    for info in venv_infos:
+        line = form.format(
+            "*" if info.name == active_name else "",
+            info.name,
+            "v" if info.run else "",
+            "v" if info.build else "",
+            let_len=let_len,
+            let_agn="<",
+        )
+        print(line)
