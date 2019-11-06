@@ -1,13 +1,39 @@
+import csv
+import functools
+import os
+import sys
+
+import setuptools
+
 from setuptools import build_meta
+from setuptools.command.build_py import build_py
 
 
-def get_paths_triggering_build(config_settings=None):
-    """Get a list of paths that should trigger a rebuild if changed.
+class _CollectPureCommand(build_py):
+    def run(self):
+        rows = [
+            (
+                path,
+                os.path.join(self.get_package_dir(pkg), os.path.basename(path))
+            )
+            for pkg, _, path in self.find_all_modules()
+        ] + [
+            (
+                os.path.join(src_dir, filename),
+                os.path.join(self.get_package_dir(package), filename),
+            )
+            for package, src_dir, _, filenames in self.data_files
+            for filename in filenames
+        ]
 
-    This should return a list of strings specifying items on the filesystem,
-    relative to the project root. Frontend is expected to call
-    ``build_for_dev`` if any of them is modified later than the last build.
-    """
+        # _build_directory is set in `collect_pure_for_dev`.
+        output = os.path.join(self._build_directory, "PURE")
+        with open(output, "w") as f:
+            # Same options as RECORD in wheels.
+            writer = csv.writer(
+                f, delimiter=",", quotechar='"', lineterminator="\n"
+            )
+            writer.writerows(rows)
 
 
 def collect_pure_for_dev(build_directory, config_settings=None):
@@ -23,7 +49,33 @@ def collect_pure_for_dev(build_directory, config_settings=None):
 
     The hook MAY NOT modify any files except the aforementioned ``.PURE`` file.
     """
-    # Basically should use logic in `build_py` but collect paths instead.
+    global_options = []
+    if config_settings and "--global-option" in config_settings:
+        global_options = config_settings["--global-option"]
+
+    class CollectPureCommand(_CollectPureCommand):
+        _build_directory = build_directory
+
+    setuptools_setup = setuptools.setup
+
+    @functools.wraps(setuptools_setup)
+    def _patched_setup(**kwargs):
+        commands = kwargs.pop("cmdclass", {})
+        commands["build_py"] = CollectPureCommand
+        return setuptools_setup(cmdclass=commands, **kwargs)
+
+    setuptools.setup = _patched_setup
+    sys.argv = sys.argv[:1] + ["build_py"] + global_options
+    build_meta._BACKEND.run_setup()  # HACK.
+
+
+def get_paths_triggering_build(config_settings=None):
+    """Get a list of paths that should trigger a rebuild if changed.
+
+    This should return a list of strings specifying items on the filesystem,
+    relative to the project root. Frontend is expected to call
+    ``build_for_dev`` if any of them is modified later than the last build.
+    """
 
 
 def build_for_dev(build_directory, config_settings=None):
