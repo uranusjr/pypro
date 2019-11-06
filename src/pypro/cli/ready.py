@@ -19,8 +19,8 @@ def configure(parser):
 
 
 def run(options):
-    actions.sync_dependencies()
     if options.builds_ext:
         actions.builds_ext()
     actions.build_py()
+    actions.sync_dependencies()
     actions.install_project()

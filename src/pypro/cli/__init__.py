@@ -1,7 +1,7 @@
-from . import clean, new, prep, ready, run, venv
+from . import clean, new, ready, run, venv
 
 
-_subcommands = [clean, new, prep, ready, run, venv]
+_subcommands = [clean, new, ready, run, venv]
 
 
 def build_subcommands(subparsers):
