@@ -13,10 +13,12 @@ class _CollectPureCommand(build_py):
     def run(self):
         rows = [
             (
-                path,
-                os.path.join(self.get_package_dir(pkg), os.path.basename(path))
+                mod_path,
+                os.path.join(
+                    self.get_package_dir(package), os.path.basename(mod_path)
+                ),
             )
-            for pkg, _, path in self.find_all_modules()
+            for package, _, mod_path in self.find_all_modules()
         ] + [
             (
                 os.path.join(src_dir, filename),

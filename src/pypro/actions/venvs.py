@@ -1,7 +1,6 @@
 import os
 import sys
 import typing
-import warnings
 
 from pypro.projects import Project, runtimes
 
@@ -28,9 +27,15 @@ def _find_runtime_match(
 
 def add(project: Project, python: str) -> int:
     try:
-        runtime = project.create_runtime(python, prompt=project.name)
-    except runtimes.InterpreterNotFound:
-        message = "Error: {!r} is not a valid Python interpreter"
+        runtime = project.create_runtime(python)
+    except runtimes.RuntimeExists as e:
+        message = "Error: a runtime already exists at {!r}".format(
+            e.runtime.root
+        )
+        print(message, file=sys.stderr)
+        return VENV_NOT_FOUND
+    except runtimes.InterpreterNotFound as e:
+        message = "Error: {!r} is not a valid interpreter".format(e.spec)
         print(message, file=sys.stderr)
         return VENV_NOT_FOUND
     except runtimes.PyUnavailable:
@@ -49,19 +54,15 @@ def add(project: Project, python: str) -> int:
 
 
 def remove(project: Project, alias: str) -> int:
-    with warnings.catch_warnings(record=True) as recorder:
-        warnings.simplefilter("always", runtimes.FailedToRemove)
-
-        runtime = _find_runtime_match(project, alias)
-        if not runtime:
-            return VENV_NOT_FOUND
-
+    runtime = _find_runtime_match(project, alias)
+    if not runtime:
+        return VENV_NOT_FOUND
+    try:
         project.remove_runtime(runtime)
-        for w in recorder:
-            env_dir, e = w.args
-            env_dir = env_dir.relative_to(project.root)
-            message = "Warning: Failed to remove {}\n{}".format(env_dir, e)
-            print(message, file=sys.stderr)
+    except Exception as e:
+        env_dir = runtime.root.relative_to(project.root)
+        message = "Warning: Failed to remove {}\n{}".format(env_dir, e)
+        print(message, file=sys.stderr)
     return 0
 
 

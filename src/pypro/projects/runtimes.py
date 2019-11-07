@@ -1,115 +1,33 @@
+__all__ = [
+    # Exceptions.
+    "FailedToRemove",
+    "InterpreterNotFound",
+    "MultipleRuntimes",
+    "NoRuntimes",
+    "PyUnavailable",
+    "RuntimeExists",
+    # Mixin.
+    "ProjectRuntimeManagementMixin",
+]
+
 import dataclasses
-import os
 import pathlib
-import re
 import shutil
-import subprocess
-import sys
 import typing
-import warnings
 
 from pypro import _virtenv
 from pypro.venvs import VirtualEnvironment
 
 from .base import BaseProject
+from ._envs import (
+    PyUnavailable,
+    format_venv_name,
+    looks_like_path,
+    resolve_python,
+)
 
 
 Runtime = VirtualEnvironment
-
-_PY_VER_RE = re.compile(r"^(?P<major>\d+)(:?\.(?P<minor>\d+))?")
-
-
-def _looks_like_path(v: typing.Union[pathlib.Path, str]) -> bool:
-    if isinstance(v, pathlib.Path):
-        return True
-    if os.sep in v:
-        return True
-    if os.altsep and os.altsep in v:
-        return True
-    return False
-
-
-def _is_executable(path: pathlib.Path) -> bool:
-    return path.is_file() and os.access(str(path), os.X_OK)
-
-
-def _find_in_env_path(cmd: str) -> typing.Optional[pathlib.Path]:
-    exts = [s for s in os.environ.get("PATHEXT", "").split(os.pathsep) if s]
-    for prefix in os.environ.get("PATH", "").split(os.pathsep):
-        if not prefix:
-            continue
-        path = pathlib.Path(prefix, cmd)
-        if _is_executable(path):
-            return path
-        for ext in exts:
-            p = path.with_suffix(ext)
-            if _is_executable(p):
-                return p
-    return None
-
-
-class PyUnavailable(Exception):
-    pass
-
-
-def _get_command_output(*args, **kwargs) -> str:
-    out = subprocess.check_output(*args, **kwargs)
-    out = out.decode(sys.stdout.encoding)
-    out = out.strip()
-    return out
-
-
-def _find_python_with_py(python: str) -> typing.Optional[pathlib.Path]:
-    py = _find_in_env_path("py")
-    if not py:
-        raise PyUnavailable()
-    code = "import sys; print(sys.executable)"
-    out = _get_command_output([str(py), "-{}".format(python), "-c", code])
-    if not out:
-        return None
-    return pathlib.Path(out)
-
-
-def _resolve_python(python: str) -> typing.Optional[pathlib.Path]:
-    match = _PY_VER_RE.match(python)
-    if match:
-        return _find_python_with_py(python)
-    if _looks_like_path(python):
-        return pathlib.Path(python)
-    return _find_in_env_path(python)
-
-
-_VENV_NAME_CODE = """
-from __future__ import print_function
-import hashlib
-import sys
-import platform
-exe = sys.executable.encode(sys.getfilesystemencoding(), "ignore")
-print("{0}-{1[0]}.{1[1]}-{2.system}-{2.machine}-{3}".format(
-    platform.python_implementation(),
-    sys.version_info,
-    platform.uname(),
-    hashlib.sha256(exe).hexdigest()[:8],
-).lower())
-"""
-
-
-def _format_name_for_runtime(python: os.PathLike) -> str:
-    """Build a unique identifier for the interpreter to place the venv.
-
-    This is done by asking the interpreter to format a string containing:
-
-    * Python inplementation.
-    * Python version (major.minor).
-    * Plarform name.
-    * Processor type.
-    * A 8-char hash of the interpreter path for disambiguation.
-
-    These parts are lowercased and joined by `-` (dash).
-
-    Example: `cpython-3.7-darwin-x86_64-3d3725a6`.
-    """
-    return _get_command_output([str(python), "-c", _VENV_NAME_CODE])
 
 
 @dataclasses.dataclass()
@@ -117,6 +35,7 @@ class InterpreterNotFound(Exception):
     spec: str
 
 
+@dataclasses.dataclass()
 class RuntimeExists(Exception):
     runtime: Runtime
 
@@ -151,8 +70,8 @@ class _QuintapletMatcher:
 
     @classmethod
     def from_alias(cls, alias):
-        if _looks_like_path(alias):
-            alias = _format_name_for_runtime(pathlib.Path(alias))
+        if looks_like_path(alias):
+            alias = format_venv_name(alias)
         parts = alias.split("-")
         try:
             ctor = {
@@ -224,11 +143,11 @@ class ProjectRuntimeManagementMixin(BaseProject):
     def create_runtime(self, spec: str) -> Runtime:
         """Create a new runtime based on given base interpreter.
         """
-        python = _resolve_python(spec)
+        python = resolve_python(spec)
         if not python:
             raise InterpreterNotFound(spec)
 
-        runtime = self._get_runtime(_format_name_for_runtime(python))
+        runtime = self._get_runtime(format_venv_name(python))
         if runtime.exists():
             raise RuntimeExists(runtime)
 
@@ -318,7 +237,4 @@ class ProjectRuntimeManagementMixin(BaseProject):
         # Deactivate env if it is going to be removed.
         if self.get_active_runtime() == runtime:
             self._runtime_marker.unlink()
-        try:
-            shutil.rmtree(str(runtime.root))
-        except Exception as e:
-            warnings.warn(FailedToRemove(runtime.root, str(e)))
+        shutil.rmtree(str(runtime.root))
