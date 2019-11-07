@@ -1,4 +1,10 @@
-__all__ = ["format_venv_name", "looks_like_path", "resolve_python"]
+__all__ = [
+    "PyUnavailable",
+    "create_venv",
+    "format_venv_name",
+    "looks_like_path",
+    "resolve_python",
+]
 
 import os
 import pathlib
@@ -6,6 +12,8 @@ import re
 import subprocess
 import sys
 import typing
+
+from pypro import _virtenv
 
 
 def _is_executable(path: pathlib.Path) -> bool:
@@ -102,3 +110,9 @@ def format_venv_name(python: os.PathLike) -> str:
     Example: `cpython-3.7-darwin-x86_64-3d3725a6`.
     """
     return _get_command_output([str(python), "-c", _VENV_NAME_CODE])
+
+
+def create_venv(python, env_dir, prompt):
+    _virtenv.create(
+        python=python, env_dir=env_dir, system=False, prompt=prompt, bare=False
+    )

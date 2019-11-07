@@ -1,5 +1,4 @@
-from pypro.actions import venvs
-from pypro.projects import Project
+from pypro.actions import projects, venvs
 
 name = "venv"
 
@@ -16,7 +15,9 @@ def configure(parser):
 
 
 def run(options):
-    project = Project.discover()
+    project, error = projects.find()
+    if project is None:
+        return error
 
     if options.add:
         return venvs.add(project, options.add)

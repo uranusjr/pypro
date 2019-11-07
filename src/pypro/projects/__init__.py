@@ -1,8 +1,9 @@
-__all__ = ["Project"]
+__all__ = ["Project", "ProjectNotFound"]
 
 import pathlib
 
 from .base import BaseProject
+from .buildenvs import ProjectBuildEnvManagementMixin
 from .runtimes import ProjectRuntimeManagementMixin
 
 
@@ -16,7 +17,9 @@ def _is_project_root(path):
     return path.joinpath("pyproject.toml").is_file()
 
 
-class Project(ProjectRuntimeManagementMixin, BaseProject):
+class Project(
+    ProjectBuildEnvManagementMixin, ProjectRuntimeManagementMixin, BaseProject
+):
     @classmethod
     def discover(cls, start=None):
         if not start:

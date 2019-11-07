@@ -6,8 +6,9 @@ __all__ = [
     "NoRuntimes",
     "PyUnavailable",
     "RuntimeExists",
-    # Mixin.
+    # Functionalities.
     "ProjectRuntimeManagementMixin",
+    "Runtime",
 ]
 
 import dataclasses
@@ -15,12 +16,12 @@ import pathlib
 import shutil
 import typing
 
-from pypro import _virtenv
 from pypro.venvs import VirtualEnvironment
 
 from .base import BaseProject
 from ._envs import (
     PyUnavailable,
+    create_venv,
     format_venv_name,
     looks_like_path,
     resolve_python,
@@ -151,13 +152,9 @@ class ProjectRuntimeManagementMixin(BaseProject):
         if runtime.exists():
             raise RuntimeExists(runtime)
 
-        _virtenv.create(
-            python=python,
-            env_dir=runtime.root,
-            system=False,
-            prompt=self.name,  # TODO: Make this configurable?
-            bare=False,
-        )
+        # TODO: Make prompt configurable?
+        create_venv(python=python, env_dir=runtime.root, prompt=self.name)
+
         return runtime
 
     def find_runtime(self, alias: str) -> Runtime:
