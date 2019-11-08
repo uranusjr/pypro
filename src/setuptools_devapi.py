@@ -1,12 +1,45 @@
 import csv
 import functools
+import io
 import os
 import sys
+import tokenize
+import tempfile
 
 import setuptools
 
 from setuptools import build_meta
 from setuptools.command.build_py import build_py
+
+
+# Copied from Setuptools.
+def _open_setup_script(setup_script):
+    if not os.path.exists(setup_script):
+        return io.StringIO("from setuptools import setup; setup()")
+    return getattr(tokenize, "open", open)(setup_script)
+
+
+# Copied from Setuptools.
+def _run_setup(self, setup_script="setup.py"):
+    __file__ = setup_script
+    __name__ = "__main__"
+    with _open_setup_script(__file__) as f:
+        code = f.read().replace(r"\r\n", r"\n")
+    exec(compile(code, __file__, "exec"), locals())
+
+
+# Same options as RECORD in wheels.
+_CSV_KWARGS = {"delimiter": ",", "quotechar": '"', "lineterminator": "\n"}
+
+
+def _write_csv(f, rows):
+    f.seek(0)
+    csv.writer(f, **_CSV_KWARGS).writerows(rows)
+
+
+def _read_csv(f):
+    f.seek(0)
+    return list(csv.reader(f, **_CSV_KWARGS))
 
 
 class _CollectPureCommand(build_py):
@@ -27,48 +60,45 @@ class _CollectPureCommand(build_py):
             for package, src_dir, _, filenames in self.data_files
             for filename in filenames
         ]
-
-        # _build_directory is set in `collect_pure_for_dev`.
-        output = os.path.join(self._build_directory, "PURE")
-        with open(output, "w") as f:
-            # Same options as RECORD in wheels.
-            writer = csv.writer(
-                f, delimiter=",", quotechar='"', lineterminator="\n"
-            )
-            writer.writerows(rows)
+        _write_csv(self._temp_file, rows)
 
 
-def collect_pure_for_dev(build_directory, config_settings=None):
+def collect_pure_for_dev(config_settings=None):
     """Collect Python files for a develop install.
 
-    This should generate a file at ``{build_directory}/PURE`` that holds a
-    list of Python files this project would install. The format is similar to
-    ``RECORD`` in a wheel, but each line has two elements:
+    Returns a list of 2-tuples representing Python files this project would
+    install. Each 2-tuple is specified as:
 
     * The path where the file would be installed to, relative to the base
       location (similar to RECORD's first element).
     * The path where the file is located, relative to the project root.
-
-    The hook MAY NOT modify any files except the aforementioned ``.PURE`` file.
     """
     global_options = []
     if config_settings and "--global-option" in config_settings:
         global_options = config_settings["--global-option"]
 
-    class CollectPureCommand(_CollectPureCommand):
-        _build_directory = build_directory
+    with tempfile.TemporaryFile(mode="w+") as tf:
 
-    setuptools_setup = setuptools.setup
+        class CollectPureCommand(_CollectPureCommand):
+            _temp_file = tf
 
-    @functools.wraps(setuptools_setup)
-    def _patched_setup(**kwargs):
-        commands = kwargs.pop("cmdclass", {})
-        commands["build_py"] = CollectPureCommand
-        return setuptools_setup(cmdclass=commands, **kwargs)
+        setuptools_setup = setuptools.setup
 
-    setuptools.setup = _patched_setup
-    sys.argv = sys.argv[:1] + ["build_py"] + global_options
-    build_meta._BACKEND.run_setup()  # HACK.
+        @functools.wraps(setuptools_setup)
+        def _patched_setup(**kwargs):
+            commands = kwargs.pop("cmdclass", {})
+            commands["build_py"] = CollectPureCommand
+            return setuptools_setup(cmdclass=commands, **kwargs)
+
+        setuptools.setup = _patched_setup
+        sys.argv = sys.argv[:1] + ["build_py"] + global_options
+        try:
+            _run_setup()
+        except SystemExit as e:
+            if e.args[0]:
+                raise
+
+        return _read_csv(tf)
 
 
 def get_paths_triggering_build(config_settings=None):

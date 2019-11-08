@@ -1,7 +1,7 @@
 __all__ = [
     "PyUnavailable",
     "create_venv",
-    "format_venv_name",
+    "get_interpreter_quintuplet",
     "looks_like_path",
     "resolve_python",
 ]
@@ -14,25 +14,7 @@ import sys
 import typing
 
 from pypro import _virtenv
-
-
-def _is_executable(path: pathlib.Path) -> bool:
-    return path.is_file() and os.access(str(path), os.X_OK)
-
-
-def _find_in_env_path(cmd: str) -> typing.Optional[pathlib.Path]:
-    exts = [s for s in os.environ.get("PATHEXT", "").split(os.pathsep) if s]
-    for prefix in os.environ.get("PATH", "").split(os.pathsep):
-        if not prefix:
-            continue
-        path = pathlib.Path(prefix, cmd)
-        if _is_executable(path):
-            return path
-        for ext in exts:
-            p = path.with_suffix(ext)
-            if _is_executable(p):
-                return p
-    return None
+from pypro.utils import find_in_paths
 
 
 class PyUnavailable(Exception):
@@ -50,7 +32,7 @@ _PY_VER_RE = re.compile(r"^(?P<major>\d+)(:?\.(?P<minor>\d+))?")
 
 
 def _find_python_with_py(python: str) -> typing.Optional[pathlib.Path]:
-    py = _find_in_env_path("py")
+    py = find_in_paths("py")
     if not py:
         raise PyUnavailable()
     code = "import sys; print(sys.executable)"
@@ -76,36 +58,50 @@ def resolve_python(python: str) -> typing.Optional[pathlib.Path]:
         return _find_python_with_py(python)
     if looks_like_path(python):
         return pathlib.Path(python)
-    return _find_in_env_path(python)
+    return find_in_paths(python)
 
 
+# The prefix part is adopted from Virtualenv's approach. This allows us to find
+# the most "base" prefix as possible, going through both virtualenv and venv
+# boundaries. In particular `real_prefix` must be tried first since virtualenv
+# does not preserve any other values.
+# https://github.com/pypa/virtualenv/blob/16.7.7/virtualenv.py#L1419-L1426
 _VENV_NAME_CODE = """
 from __future__ import print_function
 import hashlib
 import sys
 import platform
-exe = sys.executable.encode(sys.getfilesystemencoding(), "ignore")
+
+try:
+    prefix = sys.real_prefix
+except AttributeError:
+    try:
+        prefix = sys.base_prefix
+    except AttributeError:
+        prefix = sys.prefix
+
+prefix = prefix.encode(sys.getfilesystemencoding(), "ignore")
+
 print("{0}-{1[0]}.{1[1]}-{2.system}-{2.machine}-{3}".format(
     platform.python_implementation(),
     sys.version_info,
     platform.uname(),
-    hashlib.sha256(exe).hexdigest()[:8],
+    hashlib.sha256(prefix).hexdigest()[:8],
 ).lower())
 """
 
 
-def format_venv_name(python: os.PathLike) -> str:
+def get_interpreter_quintuplet(python: os.PathLike) -> str:
     """Build a unique identifier for the interpreter to place the venv.
 
-    This is done by asking the interpreter to format a string containing:
+    This is done by asking the interpreter to format a string containing the
+    following parts, lowercased and joined with `-` (dash):
 
     * Python inplementation.
     * Python version (major.minor).
     * Plarform name.
     * Processor type.
-    * A 8-char hash of the interpreter path for disambiguation.
-
-    These parts are lowercased and joined by `-` (dash).
+    * A 8-char hash of the interpreter prefix for disambiguation.
 
     Example: `cpython-3.7-darwin-x86_64-3d3725a6`.
     """

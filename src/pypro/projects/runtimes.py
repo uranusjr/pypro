@@ -22,7 +22,7 @@ from .base import BaseProject
 from ._envs import (
     PyUnavailable,
     create_venv,
-    format_venv_name,
+    get_interpreter_quintuplet,
     looks_like_path,
     resolve_python,
 )
@@ -72,7 +72,7 @@ class _QuintapletMatcher:
     @classmethod
     def from_alias(cls, alias):
         if looks_like_path(alias):
-            alias = format_venv_name(alias)
+            alias = get_interpreter_quintuplet(alias)
         parts = alias.split("-")
         try:
             ctor = {
@@ -141,18 +141,18 @@ class ProjectRuntimeManagementMixin(BaseProject):
                 continue
             yield Runtime(entry)
 
-    def create_runtime(self, spec: str) -> Runtime:
+    def create_runtime(self, interpreter_spec: str) -> Runtime:
         """Create a new runtime based on given base interpreter.
         """
-        python = resolve_python(spec)
+        python = resolve_python(interpreter_spec)
         if not python:
-            raise InterpreterNotFound(spec)
+            raise InterpreterNotFound(interpreter_spec)
 
-        runtime = self._get_runtime(format_venv_name(python))
+        runtime = self._get_runtime(get_interpreter_quintuplet(python))
         if runtime.exists():
             raise RuntimeExists(runtime)
 
-        # TODO: Make prompt configurable?
+        # TODO: Make prompt configurable? Include quintuplet in prompt?
         create_venv(python=python, env_dir=runtime.root, prompt=self.name)
 
         return runtime
@@ -234,4 +234,5 @@ class ProjectRuntimeManagementMixin(BaseProject):
         # Deactivate env if it is going to be removed.
         if self.get_active_runtime() == runtime:
             self._runtime_marker.unlink()
-        shutil.rmtree(str(runtime.root))
+        if runtime.exists():
+            shutil.rmtree(str(runtime.root))

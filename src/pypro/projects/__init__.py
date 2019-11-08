@@ -1,9 +1,9 @@
-__all__ = ["Project", "ProjectNotFound"]
+__all__ = ["Build", "Project", "ProjectNotFound"]
 
 import pathlib
 
 from .base import BaseProject
-from .buildenvs import ProjectBuildEnvManagementMixin
+from .builds import Build, ProjectBuildManagementMixin
 from .runtimes import ProjectRuntimeManagementMixin
 
 
@@ -18,7 +18,7 @@ def _is_project_root(path):
 
 
 class Project(
-    ProjectBuildEnvManagementMixin, ProjectRuntimeManagementMixin, BaseProject
+    ProjectBuildManagementMixin, ProjectRuntimeManagementMixin, BaseProject
 ):
     @classmethod
     def discover(cls, start=None):
